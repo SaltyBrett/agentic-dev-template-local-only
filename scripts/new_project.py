@@ -72,7 +72,7 @@ GUIDE = "TEMPLATE_GUIDE.md"
 # Bumped when a release is tagged. Written to .template-version so a project can
 # answer "which template version am I on" — `--template` squashes history, so
 # nothing else records it.
-TEMPLATE_VERSION = "v1.0.0"
+TEMPLATE_VERSION = "v1.0.1"
 
 # Files whose {{TOKENS}} are per-project values. Everything else is documentation
 # of the skeleton, or brand values deferred to first document production.
@@ -703,7 +703,7 @@ def main() -> int:
     for path in sorted(ROOT.rglob("*.md")):
         if ".git" in path.parts:
             continue
-        rel = str(path.relative_to(ROOT))
+        rel = path.relative_to(ROOT).as_posix()   # final_texts is keyed with `/`, on Windows too
         # Managed files are judged on what this run produces, not what is on disk.
         text = final_texts.get(rel) or path.read_text(encoding="utf-8", errors="ignore")
         d, u = remaining_tokens(text)

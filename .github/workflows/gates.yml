@@ -5,7 +5,8 @@
 # the same scripts, run where the clone's hook state does not matter.
 #
 # Two stages, because `pre-commit run --all-files` covers the pre-commit stage only: the commit-msg
-# gate is run over every commit the push or pull request carries.
+# gate is run over every commit the push or pull request carries. The `windows` job runs the
+# pre-commit stage again on Windows, whose paths, encodings and file locks differ.
 name: gates
 
 on:
@@ -110,4 +111,38 @@ jobs:
             echo "--- $(git log -1 --format='%h %s' "$sha")"
             pre-commit run --hook-stage commit-msg --commit-msg-filename /tmp/msg --all-files
           done
+
+  # The pre-commit-stage suite on Windows, set up as the Windows setup script sets up a machine:
+  # Python reads files as UTF-8, and python3 names a real interpreter, which the Claude Code hooks
+  # start by that name.
+  windows:
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: python3 beside python, as the setup script makes it
+        shell: pwsh
+        run: |
+          $python = (Get-Command python).Source
+          $python3 = Join-Path (Split-Path -Parent $python) 'python3.exe'
+          if (-not (Test-Path $python3)) { Copy-Item $python $python3 }
+          python3 --version
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-windows-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - run: pip install pre-commit
+
+      - name: Pre-commit-stage gates
+        run: pre-commit run --all-files --show-diff-on-failure
 

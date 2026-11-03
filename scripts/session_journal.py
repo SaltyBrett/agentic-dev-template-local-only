@@ -16,7 +16,8 @@ secret or a banned name into a public history. And an ignored file is outside pr
 so an append that lands while the suite runs cannot collide with the stash and its restore: the
 writer is safe beside the suite by construction, not by timing. Concurrent writers (parallel tool
 calls) are kept whole by one os.write of one line on an O_APPEND descriptor, under an exclusive
-flock where the platform has one.
+lock: flock on POSIX; on Windows, whose O_APPEND is a seek and then a write rather than one step,
+a lock on one byte past the journal's end.
 
 WHAT IT DELIBERATELY DOES NOT DO
 --------------------------------
@@ -40,12 +41,23 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 try:
-    import fcntl  # POSIX only; on Windows the O_APPEND write alone keeps a line whole
+    import fcntl  # POSIX only
 except ImportError:  # pragma: no cover - exercised on Windows only
     fcntl = None
+try:
+    import msvcrt  # Windows only: a byte-range lock stands in for flock
+except ImportError:
+    msvcrt = None
+
+# Windows' O_APPEND seeks to the end and then writes, so two writers can take the same offset and
+# one line overwrites another. A lock on one byte far past any journal's end serializes them there
+# and never blocks a reader.
+LOCK_BYTE = 1 << 30
+LOCK_WAIT = 10.0   # seconds a writer waits for the Windows lock before the append fails
 
 JOURNAL_REL = "sprint/recovery/journal.md"
 NOTES_REL = "sprint/recovery/WORKING_NOTES.md"
@@ -159,14 +171,44 @@ def append(path: Path, line: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
     try:
-        if fcntl is not None:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-        data = (line.rstrip("\n") + "\n").encode("utf-8")
-        if os.fstat(fd).st_size == 0:
-            data = JOURNAL_HEADER.encode("utf-8") + data
-        os.write(fd, data)
+        lock(fd)
+        try:
+            data = (line.rstrip("\n") + "\n").encode("utf-8")
+            if os.fstat(fd).st_size == 0:
+                data = JOURNAL_HEADER.encode("utf-8") + data
+            os.write(fd, data)
+        finally:
+            unlock(fd)
     finally:
         os.close(fd)  # closing releases the flock
+
+
+def lock(fd: int) -> None:
+    """Take the writers' exclusive lock on the open journal: flock on POSIX, the byte at LOCK_BYTE
+    on Windows, tried until LOCK_WAIT runs out."""
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return
+    if msvcrt is None:
+        return
+    os.lseek(fd, LOCK_BYTE, os.SEEK_SET)
+    deadline = time.monotonic() + LOCK_WAIT
+    while True:
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return
+        except OSError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.005)
+
+
+def unlock(fd: int) -> None:
+    """Release the Windows lock before the descriptor closes: Windows frees a closed file's locks
+    only eventually. The flock needs nothing; closing releases it."""
+    if fcntl is None and msvcrt is not None:
+        os.lseek(fd, LOCK_BYTE, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
 
 def clear(root: Path) -> list[str]:

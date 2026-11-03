@@ -248,7 +248,7 @@ def _files(extra: dict[str, str] | None = None) -> Reader:
     files = {"/p/.claude/agents/cheap.md": AGENT_FILE, "/p/.claude/skills/big/SKILL.md": SKILL_FILE,
              "/p/.claude/skills/plain/SKILL.md": "---\nname: plain\n---\n", "/t.jsonl": REQUEST % "claude-sonnet-5-5",
              **(extra or {})}
-    return lambda path: files.get(str(path))
+    return lambda path: files.get(Path(path).as_posix())   # keyed with `/`, as Windows' str() is not
 
 
 def _event(tool: str = "Agent", level: str = "high", **tool_input: str) -> dict:
