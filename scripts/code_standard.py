@@ -1022,7 +1022,8 @@ def run_tool(argv: list[str], shell: str | None = None) -> tuple[int, str]:
 
 
 def _rel(name: str) -> str:
-    return os.path.relpath(name, ROOT) if os.path.isabs(name) else name
+    """A tool's file name as git names it: relative to the root, `/` between its parts on Windows too."""
+    return (os.path.relpath(name, ROOT) if os.path.isabs(name) else name).replace(os.sep, "/")
 
 
 def judge_clones(report: dict, touched: dict[str, set[int]], prod: set[str],
